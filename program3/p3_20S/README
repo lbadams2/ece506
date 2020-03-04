@@ -1,0 +1,15 @@
+To run the program, issue command:
+./simulate_cache_ref smp 131072 1 32 4 10 trace_file_path > output_name.txt
+
+L1_SIZE:					131072
+L1_ASSOC:					1
+L1_BLOCKSIZE:				32
+NUMBER OF PROCESSORS:		4
+COHERENCE PROTOCOL:			0 : MSI 
+							4 : Firefly
+							5 : MESI
+							10: Dragon
+
+For canneal, the number of processors need to be 4.
+For fluid, the number of processors need to be 16. 
+Wrong specification will give you segmentation fault.
