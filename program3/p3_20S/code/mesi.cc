@@ -17,29 +17,32 @@ using namespace std;
 #include "cache.h"
 
 // cache consists of cache lines, there is no actual data
-// write back(invalidate) and write allocate cache
+// write back(invalidate for MESI) and write allocate cache
 void MESI::PrRd(ulong addr, int processor_number) 
 {
     cache_state state; // M, I, S, etc
     current_cycle++;
     reads++;
     cache_line * line = find_line(addr);
-    if (line == NULL) { // cold miss
+    int sharers = sharers_exclude(addr, processor_number);
+    if (line == NULL) { // cold miss or line was evicted
         read_misses++;
         cache_line *newline = allocate_line(addr); // this will get a free or LRU line, and set its tag and state
         memory_transactions++;
-        I2S++;
-        newline->set_state(S);
+        if(sharers > 0)
+          newline->set_state(S);
+        else
+          newline->set_state(E);
         bus_reads++;
-        sendBusRd(addr, processor_number);
+        sendBusRd(addr, processor_number); // this sends the bus rd to all procs but processor_number, another cache will flush if it has the block
+        // could be cache2cache here
     }
     else { // potentially a hit
         state=line->get_state();                
         if (state == I){ // conflict miss
             read_misses++;
             cache_line *newline = allocate_line(addr); // this will get a free or LRU line, and set its tag and state
-            memory_transactions++;      
-            int sharers = sharers_exclude(addr, processor_number);
+            memory_transactions++;
             // if there are other shared copies put it in S, otherwise put in E
             if(sharers > 0) {
                 newline->set_state(S);
@@ -50,7 +53,8 @@ void MESI::PrRd(ulong addr, int processor_number)
                 I2E++;
             }
             bus_reads++;
-            sendBusRd(addr, processor_number);
+            sendBusRd(addr, processor_number); // another cache will flush if it has the block, else memory will reply with it
+            // could be cache2cache here
         }
         else if (state == M || state == S || state == E){
             update_LRU(line);
@@ -78,7 +82,8 @@ void MESI::PrWr(ulong addr, int processor_number)
           I2M++;
           newline->set_state(M);
           bus_readxs++;
-          sendBusRdX(addr, processor_number);
+          sendBusRdX(addr, processor_number); // other proc will flush its block else it goes to memory
+          // there could be cache2cache here
      }
     else
     { // hit
@@ -92,7 +97,7 @@ void MESI::PrWr(ulong addr, int processor_number)
               update_LRU(line);
               bus_upgrades++;
               memory_transactions++;
-              sendBusUpgr(addr, processor_number);
+              sendBusUpgr(addr, processor_number); // invalidate other caches
           }
           else if(state == E) {
               E2M++;
@@ -104,6 +109,7 @@ void MESI::PrWr(ulong addr, int processor_number)
 
 // since there is no data, don't have to implement flush
 // cache2cache for flushopt?
+// there might not be any cache2cache here, might all be flushes to memory
 void MESI::BusRd(ulong addr) {
     cache_state state;
     cache_line * line=find_line(addr);
@@ -116,8 +122,8 @@ void MESI::BusRd(ulong addr) {
             write_backs++; // need to write dirty val back to memory
             memory_transactions++; // from previous line
             // changing from less restrictive to more restrictive state (M to S) is a downgrade
-            // one intervention request is when the snooper snoops a BusRd to cached block in M state
             // a downgrade request in which the final state is shared is an intervention
+            // one intervention request is when the snooper snoops a BusRd to cached block in M state            
             interventions++;
             line->set_state(S);
             M2S++;
@@ -138,6 +144,7 @@ void MESI::BusRd(ulong addr) {
     }
 }
 
+// might be no cache2cache
 void MESI::BusRdX(ulong addr) {
     cache_line * line=find_line(addr);
     if (line!=NULL) {
@@ -163,6 +170,7 @@ void MESI::BusRdX(ulong addr) {
 }
 
 // this is only sent when a block in S writes and goes to M
+// this just invalidates other caches, doesn't transfer data
 void MESI::BusUpgr(ulong addr) {
     cache_line * line=find_line(addr);
     if (line!=NULL) {
