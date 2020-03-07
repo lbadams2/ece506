@@ -59,7 +59,8 @@ void Dragon::PrRd(ulong addr, int processor_number)
                 sendBusRd(addr, processor_number); // this sends the bus rd to all procs but processor_number
                 int count = sharers(addr);
                 if (count) {
-                        cache2cache++; // above bus rd retrieves value from another cache (not sure about this, may get from memory)
+                        //cache2cache++; // above bus rd retrieves value from another cache (not sure about this, may get from memory)
+                        memory_transactions++;
                         newline->set_state(Sc);
                 }
                 else {
@@ -94,15 +95,16 @@ void Dragon::PrWr(ulong addr, int processor_number)
         if (line == NULL) {
                 write_misses++;
                 cache_line *newline = allocate_line(addr);// LRU updated in this method
-                int count = sharers(addr);
+                int count = sharers_exclude(addr, processor_number);
                 if (count) {
                         sendBusRd(addr, processor_number); // get current value from another cache
-                        cache2cache++; // from above bus rd
+                        //cache2cache++; // from above bus rd
+                        memory_transactions++;
                         newline->set_state(Sm); // update value and post bus update to update other proc's caches
                         //bus_writes++;
                         bus_upgrades++; // not sure if this should be used for updates
                         sendBusUpgr(addr, processor_number); // really bus update
-                        memory_transactions++;//write to memory?
+                        cache2cache++; // busupd (busupgr) is cache2cache
                 }
                 else {
                         sendBusRd(addr, processor_number); // issues bus read to get from memory
@@ -121,13 +123,14 @@ void Dragon::PrWr(ulong addr, int processor_number)
                         if(!shared_line) {
                                 line->set_state(M);       
                         }
+                        cache2cache++; // increment cache2cache for write also gets incremented on a read
                         // no memory transaction(just bus upgrade and cache hit) or intervention
-                        // increment cache2cache in bus
                 }
                 else if (state == Sc) {
                         update_LRU(line);
                         sendBusUpgr(addr, processor_number);// why do this if transitioning to m (no other copies)?
                         bus_upgrades++;
+                        cache2cache++;
                         if(shared_line) {
                                 line->set_state(Sm);
                         }
@@ -158,7 +161,9 @@ void Dragon::BusRd(ulong addr)
                 state = line->get_state();
                 if (state == Sm) { // only owner of block has it in Sm
                         flushes++;
-                        cache2cache++; // picked up by other cache?
+                        //cache2cache++; // picked up by other cache?
+                        memory_transactions++;
+                        write_backs++;
                         // not sure if this writes back to memory
                 }
                 else if (state == Sc) {
@@ -166,7 +171,8 @@ void Dragon::BusRd(ulong addr)
                 }
                 else if (state == M) {
                         flushes++;
-                        cache2cache++; // not sure here
+                        memory_transactions++;
+                        //cache2cache++; // not sure here
                         line->set_state(Sm);
                         // not sure if this writes back to memory
                 }
@@ -211,9 +217,14 @@ void Dragon::BusWr(ulong addr)
       
 }
 
-
+// i think this corresponds to flushes in the bus transition diagram
 bool Dragon::writeback_needed(cache_state state) 
 {
-    
+    if (state == M || state == Sm)
+    {
+        return true;
+    } else {
+        return false;
+    }
 }
 

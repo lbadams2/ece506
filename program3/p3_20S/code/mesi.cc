@@ -130,12 +130,13 @@ void MESI::BusRd(ulong addr) {
         }
         // do a flushopt here for cache2cache transfer, msi doesn't do cache2cache
         else if(state == S) { 
-          cache2cache++; // flushopt
-          // no memory transaction i don't think
+          //cache2cache++; // flushopt
+          memory_transactions++;
           // no write back, data didn't change
         }
         else if(state == E) {
-          cache2cache++; // flushopt
+          //cache2cache++; // flushopt
+          memory_transactions++;
           // not sure if this is intervention or not
           line->set_state(S);
           E2S++;
@@ -152,7 +153,8 @@ void MESI::BusRdX(ulong addr) {
         state=line->get_state();
         if (state == S || state == E)
         {
-            cache2cache++; // this is done so proc intending to write can get value from another cache rather than main memory
+            //cache2cache++; // this is done so proc intending to write can get value from another cache rather than main memory
+            memory_transactions++;
             invalidations++; // anytime state is changed to I
             line->set_state(I);
             // no transition counter to I, use invalidations counter instead
