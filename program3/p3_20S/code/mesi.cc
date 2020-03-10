@@ -28,11 +28,15 @@ void MESI::PrRd(ulong addr, int processor_number)
     if (line == NULL) { // cold miss or line was evicted
         read_misses++;
         cache_line *newline = allocate_line(addr); // this will get a free or LRU line, and set its tag and state
-        memory_transactions++;
-        if(sharers > 0)
+        //memory_transactions++;
+        if(sharers > 0) {
           newline->set_state(S);
-        else
+	  cache2cache++;
+	}
+        else {
           newline->set_state(E);
+	  memory_transactions++;
+	}
         bus_reads++;
         sendBusRd(addr, processor_number); // this sends the bus rd to all procs but processor_number, another cache will flush if it has the block
         // could be cache2cache here
@@ -72,13 +76,18 @@ void MESI::PrWrDir(ulong addr, int processor_number) {
 void MESI::PrWr(ulong addr, int processor_number) 
 {
     cache_state state;
+    int sharers;
     current_cycle++;
     writes++;
     cache_line * line = find_line(addr);
-    if (line == NULL || line->get_state() == I){ // cold or conflict miss, same as MSI
+    if (line == NULL || line->get_state() == I){ // cold or conflict miss or LRU miss, same as MSI
           write_misses++;
           cache_line *newline = allocate_line(addr);
-          memory_transactions++;
+	  sharers = sharers_exclude(addr, processor_number);
+	  if(sharers > 0)
+		cache2cache++;
+	  else
+          	memory_transactions++;
           I2M++;
           newline->set_state(M);
           bus_readxs++;
@@ -87,7 +96,7 @@ void MESI::PrWr(ulong addr, int processor_number)
      }
     else
     { // hit
-          state=line->get_state();
+	  state = line->get_state();
           if (state == M){ // same as MSI
               update_LRU(line);
           }
@@ -96,7 +105,8 @@ void MESI::PrWr(ulong addr, int processor_number)
               line->set_state(M);
               update_LRU(line);
               bus_upgrades++;
-              memory_transactions++;
+	      //no mem tx on cache hit
+              //memory_transactions++;
               sendBusUpgr(addr, processor_number); // invalidate other caches
           }
           else if(state == E) {
@@ -131,13 +141,13 @@ void MESI::BusRd(ulong addr) {
         // do a flushopt here for cache2cache transfer, msi doesn't do cache2cache
         else if(state == S) { 
           //cache2cache++; // flushopt
-          memory_transactions++;
+          //memory_transactions++;
           // no write back, data didn't change
         }
         else if(state == E) {
           //cache2cache++; // flushopt
-          memory_transactions++;
-          // not sure if this is intervention or not
+          //memory_transactions++;
+          interventions++;
           line->set_state(S);
           E2S++;
         }
@@ -154,7 +164,7 @@ void MESI::BusRdX(ulong addr) {
         if (state == S || state == E)
         {
             //cache2cache++; // this is done so proc intending to write can get value from another cache rather than main memory
-            memory_transactions++;
+            //memory_transactions++;
             invalidations++; // anytime state is changed to I
             line->set_state(I);
             // no transition counter to I, use invalidations counter instead

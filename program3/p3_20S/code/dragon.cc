@@ -42,6 +42,25 @@ void Dragon::PrWrDir(ulong addr, int processor_number) {
 //Section ends here. edit the functions in the section below 
 //-------------------------------------------------------------
 
+
+cache_line * Dragon::allocate_line(ulong addr)
+{
+    ulong tag;
+    cache_state state;
+
+    cache_line *victim = find_line_to_replace(addr);
+    assert(victim != 0);
+    state = victim->get_state();
+    if (writeback_needed(state))
+    {
+        //write_backs++;
+        //memory_transactions++;
+    }
+    tag = tag_field(addr);
+    victim->set_tag(tag);
+    victim->set_state(I);
+    return victim;
+}
 // write back(update for dragon) write allocate
 // firefly is update protocol that also updates main memory
 // misses enter from outside on state diagram because there is no invalid state, so can't have miss if addr maps to a block
@@ -52,15 +71,18 @@ void Dragon::PrRd(ulong addr, int processor_number)
         reads++;
         current_cycle++;
         cache_line *line = find_line(addr);
+	if(addr == 0x00174318 && processor_number == 2 && line == NULL)
+		cout << "proc 2 read miss\n";
         if (line == NULL) { // cold miss or line was evicted
                 read_misses++;
                 cache_line *newline = allocate_line(addr); // LRU updated in this method
                 bus_reads++;
                 sendBusRd(addr, processor_number); // this sends the bus rd to all procs but processor_number
-                int count = sharers(addr);
+                int count = sharers_exclude(addr, processor_number);
                 if (count) {
                         //cache2cache++; // above bus rd retrieves value from another cache (not sure about this, may get from memory)
-                        memory_transactions++;
+                        //memory_transactions++;
+                        cache2cache++;
                         newline->set_state(Sc);
                 }
                 else {
@@ -98,13 +120,14 @@ void Dragon::PrWr(ulong addr, int processor_number)
                 int count = sharers_exclude(addr, processor_number);
                 if (count) {
                         sendBusRd(addr, processor_number); // get current value from another cache
-                        //cache2cache++; // from above bus rd
+                        cache2cache++; // from above bus rd
                         memory_transactions++;
                         newline->set_state(Sm); // update value and post bus update to update other proc's caches
                         //bus_writes++;
-                        bus_upgrades++; // not sure if this should be used for updates
-                        sendBusUpgr(addr, processor_number); // really bus update
-                        cache2cache++; // busupd (busupgr) is cache2cache
+                        //bus_upgrades++; // not sure if this should be used for updates
+			bus_writes++; // don't want duplicate mem tx by calling busupgr
+                        //sendBusUpgr(addr, processor_number); // really bus update
+                        //cache2cache++; // busupd (busupgr) is cache2cache
                 }
                 else {
                         sendBusRd(addr, processor_number); // issues bus read to get from memory
@@ -119,18 +142,19 @@ void Dragon::PrWr(ulong addr, int processor_number)
                 if (state == Sm) {
                         update_LRU(line);
                         sendBusUpgr(addr, processor_number); // why do this if transitioning to m (no other copies)?
-                        bus_upgrades++;
+                        bus_writes++;
                         if(!shared_line) {
                                 line->set_state(M);       
                         }
-                        cache2cache++; // increment cache2cache for write also gets incremented on a read
+                        //cache2cache++; // increment cache2cache for write also gets incremented on a read
                         // no memory transaction(just bus upgrade and cache hit) or intervention
                 }
                 else if (state == Sc) {
                         update_LRU(line);
                         sendBusUpgr(addr, processor_number);// why do this if transitioning to m (no other copies)?
-                        bus_upgrades++;
-                        cache2cache++;
+                        //bus_upgrades++;
+                        bus_writes++;
+                        //cache2cache++;
                         if(shared_line) {
                                 line->set_state(Sm);
                         }
@@ -159,6 +183,8 @@ void Dragon::BusRd(ulong addr)
         cache_line *line = find_line(addr);
         if (line != NULL) { // bus ops not valid if line not found so you don't flush stale data
                 state = line->get_state();
+		if(addr == 0x00174318 && cache_num == 3)
+                	cout << "bus read proc 3, line not null state " << state << "\n";
                 if (state == Sm) { // only owner of block has it in Sm
                         flushes++;
                         //cache2cache++; // picked up by other cache?
@@ -170,9 +196,10 @@ void Dragon::BusRd(ulong addr)
                         // don't flush, owner will flush, should be one block in Sm if there are blocks in Sc
                 }
                 else if (state == M) {
-                        flushes++;
-                        memory_transactions++;
+                        //flushes++;
+                        //memory_transactions++;
                         //cache2cache++; // not sure here
+                        write_backs++;
                         line->set_state(Sm);
                         // not sure if this writes back to memory
                 }
@@ -201,12 +228,14 @@ void Dragon::BusUpgr(ulong addr)
         if (line != NULL) { // bus ops not valid if line not found so you don't flush stale data
                 state = line->get_state();
                 if (state == Sm) { // only owner of block has it in Sm
-                        cache2cache++; // executes "update" op to put the val from other cache in its cache
+                        //cache2cache++; // executes "update" op to put the val from other cache in its cache
                         line->set_state(Sc);
+			write_backs++;
                         // maybe intervention
                 }
                 else if(state == Sc) {
-                        cache2cache++; // executes "update" op to put the val from other cache in its cache
+                        //cache2cache++; // executes "update" op to put the val from other cache in its cache
+                        memory_transactions++;
                 }
                 // no bus upd for non shared states
         }
@@ -220,7 +249,7 @@ void Dragon::BusWr(ulong addr)
 // i think this corresponds to flushes in the bus transition diagram
 bool Dragon::writeback_needed(cache_state state) 
 {
-    if (state == M || state == Sm)
+    if (state == Sm)
     {
         return true;
     } else {

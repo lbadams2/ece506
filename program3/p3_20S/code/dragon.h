@@ -29,5 +29,6 @@ class Dragon : public Cache {
         void Inv(ulong addr);
         cache_line *allocate_line_dir(ulong addr);
 		void BusWr(ulong addr);
+	cache_line *allocate_line(ulong addr);
 };
 
